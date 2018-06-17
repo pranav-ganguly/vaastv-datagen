@@ -1,0 +1,248 @@
+GET mock_jobs.2018-02-01/_search
+{
+  "query": {
+    "match_all": {
+    }
+  }, 
+  "sort": [
+    {
+      "timeInMins": {
+        "order": "desc"
+      }
+    }
+  ]
+  , "size": 5
+}
+GET mock_inputs.0/_search
+{
+  "query": {
+    "match_all": {
+    }
+  }, 
+  "sort": [
+    {
+      "inputCount": {
+        "order": "asc"
+      }
+    }
+  ]
+  , "size": 5
+}
+GET mock_inputs.0/_search
+{
+  "query": {
+    "range": {
+      "inputCount": {
+        "gte": 60000
+      }
+    }
+  }, 
+  "size": 20, 
+  "aggs": {
+    "total": {
+      "sum": {
+        "field": "inputCount"
+      }
+    }
+  }
+}
+
+GET mock_inputs.0/_search
+{
+  "query": {
+    "match_all": {
+    }
+  }, 
+  "size": 0, 
+  "aggs": {
+    "size_spread": {
+      "range": {
+        "field": "inputCount",
+        "ranges": [
+          {"to": 1700},
+          {"from": 1700,"to": 6950},
+          {"from": 6950,"to": 12200},
+          {"from": 12200,"to": 17450},
+          {"from": 17450,"to": 22700},
+          {"from": 22700,"to": 27950},
+          {"from": 27950,"to": 33200},
+          {"from": 33200,"to": 38450},
+          {"from": 38450,"to": 43700},
+          {"from": 43700,"to": 48950},
+          {"from": 48950,"to": 54200},
+          {"from": 54200}
+          
+        ]
+      }
+    }
+  }
+}
+
+GET kibana5-2018.06.12/_search
+{
+  
+}
+PUT 
+{
+"mappings": {
+    "_doc": {
+      "properties": {
+        "entity_type": { 
+          "type": "join",
+          "relations": {
+            "job": "input",
+            "job": "output"
+          }
+        }
+      }
+    }
+  }
+}
+
+POST twitter/_doc/_delete_by_query?conflicts=proceed
+{
+  "query": {
+    "match_all": {}
+  }
+}
+
+
+
+GET mockmetrics.2018-02-01/_mappings
+
+PUT mockmetrics.2018-02-01
+{
+  "mappings": {
+    "entity": {
+      "properties": {
+        "startTime": {
+          "type":   "date",
+          "format": "epoch_millis"
+          },
+        "entity_type": { 
+          "type": "join",
+          "relations": {
+            "jobId": ["inputJobId","outputJobId"]
+          }
+        }
+      }
+    }
+  }
+}
+
+GET mockmetrics.2018-02-01/_search
+{
+  "query": {
+    "match_all": {}
+  }
+  , "size": 0
+  , "aggs": {
+    "entities": {
+      "terms": {
+        "field": "entityType.keyword",
+        "size": 10
+      }
+    }
+  }
+}
+GET _all/_mapping
+
+PUT _template/mockmetrics_template
+{
+  "index_patterns": ["mockmetrics*"],
+  
+  "mappings": {
+    "entity": {
+      "properties": {
+        "startTime": {
+          "type":   "date",
+          "format": "epoch_millis"
+          },
+        "entity_type": { 
+          "type": "join",
+          "relations": {
+            "jobId": ["inputJobId","outputJobId"]
+          }
+        }
+      }
+    }
+  }
+  
+}
+
+
+PUT _template/template_1
+{
+  "index_patterns": ["te*", "bar*"],
+  "settings": {
+    "number_of_shards": 1
+  },
+  "mappings": {
+    "type1": {
+      "_source": {
+        "enabled": false
+      },
+      "properties": {
+        "host_name": {
+          "type": "keyword"
+        },
+        "created_at": {
+          "type": "date",
+          "format": "EEE MMM dd HH:mm:ss Z YYYY"
+        }
+      }
+    }
+  }
+}
+
+GET mockmetrics.2018-01-01/_search
+{
+  "query" : {
+        "match": {
+          "entityType": "JOB"
+        }
+    }
+    , "size": 3
+    ,"script_fields" : {
+        "tPut" : {
+            "script" : {
+              "lang": "painless",
+              "source": """
+                if(doc['entityType.keyword'].value=='JOB'){
+                  def tPut = 0;
+                  for(def i : doc['inputs.inputCount']){
+                    tPut=i;
+                  }
+                  int time = doc['timeInMins'].;
+                  return tPut/(time*60);
+                } 
+              """
+            }
+        }
+    }
+    
+}
+
+GET _template
+GET mockmetrics.2018-02-06/_search
+{
+  "query": {
+    "match_all": {}
+  }
+}
+
+
+
+double tPut = 0;
+                    //if(doc['entityType.keyword'] == "JOB"){
+                      int totalIn = 0;
+                      int inCnt = doc['inputs'].length;
+                      for (int i = 0; i < inCnt ; ++i) {
+                        totalIn += 
+                        doc['inputs'][i]['inputCount'];
+                    }
+                    tPut = totalIn/(doc['timeInMins']*60);
+                  //}else{
+                  // tPut = -1;
+                  //}
+                return tPut;
