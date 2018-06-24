@@ -9,16 +9,19 @@ public class HiveQueryInput implements Input {
 	private long resultCount;
 	private boolean valid;
 	private Calendar startTime;
+	private long timeTakenMillis;
+	private double badInputPct;
 	
 	
 
-	public HiveQueryInput(String jobId, String query, long resultCount, boolean valid) {
+	public HiveQueryInput(String jobId, String query, long resultCount, long timeTakenMillis, boolean valid) {
 		super();
 		this.jobId = jobId;
 		this.query = query;
 		this.id = query.hashCode();
 		this.resultCount = resultCount;
 		this.valid = valid;
+		this.timeTakenMillis = timeTakenMillis;
 	}
 
 	public String getInputId() {
@@ -39,7 +42,7 @@ public class HiveQueryInput implements Input {
 	@Override
 	public Object clone() throws CloneNotSupportedException {
 		// TODO Auto-generated method stub
-		return new HiveQueryInput(this.jobId,this.query, this.resultCount, this.valid);
+		return new HiveQueryInput(this.jobId,this.query, this.resultCount, this.timeTakenMillis, this.valid);
 	}
 
 	@Override
@@ -81,6 +84,22 @@ public class HiveQueryInput implements Input {
 	public void setStartTime(Calendar time) {
 		// TODO Auto-generated method stub
 		this.startTime = time;
+	}
+
+	public long getTimeTakenMillis() {
+		return timeTakenMillis;
+	}
+
+	public void setTimeTakenMillis(long timeTakenMillis) {
+		this.timeTakenMillis = timeTakenMillis;
+	}
+
+	public double getBadInputPct() {
+		return badInputPct;
+	}
+
+	public void setBadInputPct(double badInputPct) {
+		this.badInputPct = badInputPct;
 	}
 	
 	

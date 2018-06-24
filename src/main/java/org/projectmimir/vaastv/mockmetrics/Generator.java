@@ -4,6 +4,7 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.GregorianCalendar;
 import java.util.List;
@@ -75,6 +76,9 @@ public class Generator {
 			 */
 			long jobInVol = (long)Math.round(inVolAvg*job.get_magnitude());
 			log.debug("{} jobInVol = {}",job.getName(),jobInVol);
+			
+			int jobRuntime = (int)(avgRuntime*job.get_magnitude());
+			
 			/**
 			 * Set up Job Inputs.
 			 */
@@ -100,23 +104,23 @@ public class Generator {
 			
 			//Setup inputs with +-0.125% size as per ratios.
 			for(int j=0;j<inCnt;j++) {
-				jobInputs[j] = new HiveQueryInput(job.getJobId(),"Job#"+i+"Query#"+j, 
+				jobInputs[j] = new HiveQueryInput(job.getJobId(),"Job#"+i+"Query#"+j,
+						Math.round(60000*inRatios[j]*jobRuntime*0.5*Math.random()/inRatioTotal), 
 						(long)((inRatios[j]*jobInVol/inRatioTotal)*
 						(1+(0.5-Math.random())*0.25)),
 						(Math.random()<this.inputsValidness) //probability of bad input
 					);
+				jobInputs[j].setBadInputPct(jobInputs[j].isValid()?Math.random()>this.inputsValidness?10*Math.random():0:100);
 				log.debug("{}, input {} id = {}, count = {}, valid ={}",
 						job.getName(),j,jobInputs[j].getInputId(), 
 						jobInputs[j].getInputCount(), jobInputs[j].isValid());
 			}
 			job.setInputs(jobInputs);
-			
 			/**
 			 * Set up job runtime based on magnitude. 5 if any inputs are invalid
 			 */
-			int jobRuntime = (int)(avgRuntime*job.get_magnitude());
-			job.setTimeInMins(job.isValidInputs()?jobRuntime>5?jobRuntime:
-				(int)(5*Math.random()*magn):(int)(5*Math.random()*magn));
+			
+			job.setTimeInMins(job.isValidInputs()?jobRuntime:(int)(20*Math.random()));
 			Calendar jobStartTime = Utils.getRandomTimeOfDay(this.startDate);
 			Calendar jobEndTime = (Calendar)jobStartTime.clone();
 			jobEndTime.add(Calendar.MINUTE,jobRuntime);
@@ -135,27 +139,46 @@ public class Generator {
 			//abend (0.1 * failure chance) 
 			//hang (0.1 * abend chance)
 			//Select whether the job was successful. 
+			double errCnt = 0;
 			if(job.isValidInputs()) {
-				double failure_prob = (1-this.jobStability)*job.get_magnitude();
+				double failure_prob = (1-this.jobStability)*0.25*job.get_magnitude();
 				log.debug("{}, failure_prob = {}", job.getName(),failure_prob);
 				double dice = Math.random();
 				if(dice<failure_prob) {
 					if(dice<failure_prob*0.1) {
 						if(dice<failure_prob*0.01) {
 							job.setStatus("ABORTED");
+							errCnt = Math.random()*50;
 						}else {
 							job.setStatus("ABORTED");
+							errCnt = Math.random()*50;
 						}
 					}else {
 						job.setStatus("FAILED");
+						errCnt = Math.random()*500;
 					}
 				}else {
 					job.setStatus("SUCCESSFUL");
+					errCnt = Math.random()*10;
 				}
 			}else {
 				job.setStatus("FAILED");
+				errCnt = Math.random()*500;
 			}
 			log.debug("{}, status = {}", job.getName(),job.getStatus());
+			
+			/**
+			 * Prepare Errors
+			 */
+			errCnt = errCnt>=1?(int)Math.floor(errCnt):1;
+			ErrorMessage[] err = new ErrorMessage[(int)errCnt];
+			for(int j=0;j<err.length;j++) {
+				err[j] = new ErrorMessage("ErrorMessage #"+(int)Math.floor(Math.random()*100), job.getStartTime(), job.getJobId());
+				this.errors.add(err[j]);
+			}
+			job.setErrors(err);
+			
+						
 			/**
 			 * Prepare outputs
 			 */
@@ -206,6 +229,18 @@ public class Generator {
 			this.baseJobs[i]=job;
 		}
 		
+		for (int i=0;i<this.kpis.length;i++) {
+			Kpi kpi = new Kpi();
+			kpi.setGroup("App#"+(int)(Math.floor(i/10)+1));
+			kpi.setName("KPI#"+i);
+			kpi.setStaleness(Math.random()<0.25?(int)Math.round(Math.random()*5):0);
+			kpi.setMagnitude((int)Math.round(Math.random()*8)-2);
+			kpi.setValue(Math.random()*Math.pow(10, kpi.getMagnitude()));
+			kpi.setBaseValue(kpi.getValue());
+			kpi.setTimestamp(this.startDate);
+			this.kpis[i]=kpi;
+		}
+		
 		try {
 			this.es_client  = new PreBuiltTransportClient(Settings.EMPTY)
 			        .addTransportAddress(new TransportAddress(InetAddress.getByName("localhost"), 9300));
@@ -219,60 +254,147 @@ public class Generator {
 		Calendar date = this.startDate;
 		int cycle = 0;
 		double incrFactor = (this.inputGrowthFactor-1)/this.jobCycles;
+		int avgRuntime = this.jobWindowInMins*this.jobAvgParallelism/this.jobCount;
+		Random gRand  = new Random();
+		initLoad();
+		generateLoad(date);
 		do {
 			pushToES(date);
 			cycle++;
+			this.errors = new ArrayList<ErrorMessage>();
 			date.add(Calendar.DATE, 1);
 			for(Job job : this.baseJobs) {
-				double magn = job.get_magnitude();
+				long jobInVol =0;
 				for(Input in:job.getInputs()) {
 					long inSz = in.getInputCount();
-					inSz *= (0.5*Math.random()+0.75)*(incrFactor*magn/2);
+					inSz *= 1+(0.2*Math.random()+0.9)*incrFactor;
+					jobInVol+=inSz;
 					in.setInputCount(inSz);
-					in.setValid(Math.random()<(this.inputsValidness*(1+(in.isValid()?0.1:0))));
+					double scale = gRand.nextGaussian()*0.5;
+					scale = scale<=0.90?scale>=-0.90?scale:-0.90:0.90;
+					long qt = in.getTimeTakenMillis();
+					in.setTimeTakenMillis(qt+Math.round(qt*scale));
+					in.setValid(Math.random()<(this.inputsValidness-(in.isValid()?-0.02:0.02)));
+					in.setBadInputPct(in.isValid()?Math.random()>this.inputsValidness?10*Math.random():0:100);
+					
 				}
 				for(Output op:job.getOutputs()) {
 					long opSz = op.getOutputCount();
-					opSz *= (0.5*Math.random()+0.75)*(incrFactor*magn/2);
+					opSz *= 1+(0.5*Math.random()+0.75)*incrFactor;
 					op.setOutputCount(opSz);
 				}
 				
-				int jobRuntime = (int)(job.getTimeInMins()*(1+incrFactor)*(1.125-0.125*Math.random()));
-				job.setTimeInMins(job.isValidInputs()?jobRuntime:5);
+				
+				int jobRuntime = 0;
+				if("SUCCESSFUL".equalsIgnoreCase(job.getStatus())){
+					jobRuntime = (int)(job.getTimeInMins()*(1+incrFactor));
+				}else {
+					jobRuntime = (int)(avgRuntime*job.get_magnitude());
+				}
+				job.setTimeInMins(job.isValidInputs()?jobRuntime:(int)(20*Math.random()));
 				job.getStartTime().add(Calendar.DATE, 1);
 				job.getStartTime().add(Calendar.MINUTE,(int)Math.round(20*Math.random()-10));
 				job.setEndTime((Calendar)job.getStartTime().clone());
 				job.getEndTime().add(Calendar.MINUTE,jobRuntime);
 				
+				double errCnt = 0;
+				
 				if(job.isValidInputs()) {
 					double failure_prob = (1-this.jobStability)*job.get_magnitude()*("SUCCESSFUL".equalsIgnoreCase(job.getStatus())?1:2);
 					log.trace("{}, failure_prob = {}", job.getName(),failure_prob);
 					double dice = Math.random();
+					
 					if(dice<failure_prob) {
 						if(dice<failure_prob*0.2) {
-							if(dice<failure_prob*0.01) {
-								job.setStatus("ABORTED");
-							}else {
-								job.setStatus("ABORTED");
-							}
+							job.setStatus("ABORTED");
+							errCnt = Math.random()*50;
 						}else {
 							job.setStatus("FAILED");
+							errCnt = Math.random()*500;
 						}
 					}else {
 						job.setStatus("SUCCESSFUL");
+						errCnt = Math.random()*10;
 					}
 				}else {
 					job.setStatus("FAILED");
+					errCnt = Math.random()*500;
 				}
 				job.setValidOutputs(job.isValidInputs()&&(
 						"successful".equalsIgnoreCase(job.getStatus())
 						|| (Math.random()<0.25)
 					));
+				/**
+				 * Prepare Errors
+				 */
+				errCnt = errCnt>=1?(int)Math.floor(errCnt):1;
+				ErrorMessage[] err = new ErrorMessage[(int)errCnt];
+				for(int j=0;j<err.length;j++) {
+					err[j] = new ErrorMessage("ErrorMessage #"+(int)Math.floor(Math.random()*100), job.getStartTime(), job.getJobId());
+					this.errors.add(err[j]);
+				}
+				job.setErrors(err);
+				
+				
 				
 			}
+			/**
+			 * Prepare KPIs
+			 */
+			
+			for (int i=0;i<this.kpis.length;i++) {
+				Kpi kpi = this.kpis[i];
+				double staleProb = 0;
+				double value =0;
+				double scale = 0;
+				int staleness = kpi.getStaleness();
+				if(staleness <5 && staleness >0) {
+					staleProb = Math.random()+0.5;
+				}else{
+					staleProb = Math.random()-0.8;
+				}
+				if(Math.random()<staleProb) {
+					kpi.setStaleness(++staleness);
+				}else {
+					kpi.setStaleness(0);
+				}
+				if(staleness==0) {
+					value = kpi.getBaseValue();
+					scale = gRand.nextGaussian()*0.2;
+					int magn = kpi.getMagnitude();
+					//double lim = magn==1?0.5:50*Math.pow(10, -1*kpi.getMagnitude());
+					//scale = scale<=lim?scale>=-1*lim?scale:-1*lim:lim;
+					scale = scale<=0.8?scale>=-0.8?scale:-0.8:0.8;
+					kpi.setValue(value*(1+scale));	
+				}
+				kpi.setTimestamp(date);
+				log.debug("{} value = {}, scale = {}, staleness = {}, staleProb = {}",
+						kpi.getName(), kpi.getValue(), scale, kpi.getStaleness(), staleProb);
+			}
+			generateLoad(date);
 		}while(cycle<this.jobCycles);
 	}
 	
+	private void initLoad() {
+		for(int i=0;i<120;i++) {
+			Node n = new Node();
+			n.setHostname("10.16.0."+i+1);
+			this.nodeList.add(n);
+		}
+	}
+	
+	private void generateLoad(Calendar date) {
+		Calendar timestamp = (Calendar) date.clone();
+		for(int i=0;i<24*60;i++) {
+			timestamp.add(Calendar.MINUTE, i);
+			for(Node node:this.nodeList) {
+				node.setCpu(Math.random()>0.5?node.getCpu():Math.random());
+				node.setMem(Math.random()>0.5?node.getMem():Math.random());
+				node.setStartTime(timestamp);
+				node.setAvailable(0.95>Math.random());
+			}
+		}	
+	}
 	
 	private void pushToES(Calendar date) {
 		IndexResponse res = null;
@@ -307,6 +429,35 @@ public class Generator {
 				e.printStackTrace();
 			}
 		}
+		log.debug("Index {} Job generation completed.",indexName); 
+		for(Node n:this.nodeList) {
+			try {
+				bulkReq.add(this.es_client.prepareIndex(indexName, "entity").setSource(om.writeValueAsString(n), XContentType.JSON));
+			} catch (JsonProcessingException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+		log.debug("Index {} Node generation completed.",indexName); 
+		for(ErrorMessage err:this.errors) {
+			try {
+				bulkReq.add(this.es_client.prepareIndex(indexName, "entity").setSource(om.writeValueAsString(err), XContentType.JSON));
+			} catch (JsonProcessingException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+		log.debug("Index {} Error generation completed.",indexName); 
+		
+		for(Kpi kpi:this.kpis) {
+			try {
+				bulkReq.add(this.es_client.prepareIndex(indexName, "entity").setSource(om.writeValueAsString(kpi), XContentType.JSON));
+			} catch (JsonProcessingException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+		log.debug("Index {} KPI generation completed.",indexName); 
 		
 		BulkResponse bulkRes = bulkReq.get();
 		log.debug("Index {} BulkRequest completed with status {} for {} item in {} mS", 
@@ -354,6 +505,9 @@ public class Generator {
 	
 	
 	private Job[] baseJobs;
+	private List<Node> nodeList = new ArrayList<Node>();
+	private List<ErrorMessage> errors = new ArrayList<ErrorMessage>();
+	private Kpi[] kpis = new Kpi[100];
 	private List<Input> baseInputs;
 	private List<Output> baseOutputs;
 
@@ -380,6 +534,7 @@ public class Generator {
 	private int jobAvgParallelism;
 	private double jobStability;
 	private Calendar startDate;
+	private DailyScore dscore;
 	private double rwRatio;
 	private double ioTimeRatio;
 	
@@ -392,7 +547,7 @@ public class Generator {
 	private final long DEFAULT_IO_NETSIZE = (int)(20*Math.pow(10, 12));
 	private final double DEFAULT_INPUTS_VARIANCE = 0.5;
 	private final double DEFAULT_INPUTS_SHAREDNESS = 0.5; 
-	private final double DEFAULT_INPUTS_VALIDNESS = 0.85;
+	private final double DEFAULT_INPUTS_VALIDNESS = 0.95;
 	
 	private final double DEFAULT_INPUT_OUTPUT_VOL_RATIO = 0.2;
 	
@@ -405,7 +560,7 @@ public class Generator {
 	private final int DEFAULT_JOB_COUNT = 500;
 	private final int DEFAULT_JOB_PAR_AVG = 100;
 	private final int DEFAULT_JOB_CYCLES = 90;
-	private final double DEFAULT_JOB_STABILITY = 0.9;
+	private final double DEFAULT_JOB_STABILITY = 0.95;
 	private final Calendar DEFAULT_START_DATE = new GregorianCalendar(2018, 0, 1);
 	
 	private final double DEFAULT_READ_WRITE_RATIO = 0.1;

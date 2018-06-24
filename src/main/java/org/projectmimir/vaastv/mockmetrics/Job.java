@@ -13,13 +13,24 @@ public class Job {
 	private int timeInMins;
 	private Input[] inputs;
 	private int[] inputRejectionCount;
-	private String[] errors;
+	private ErrorMessage[] errors;
 	private Output[] outputs;
 	private Calendar startTime;
 	private Calendar endTime;
 	private double _magnitude;
 	private boolean validOutputs;
 	
+	
+	public double getThroughput() {
+		long l = 0;
+		if("SUCCESSFUL".equalsIgnoreCase(this.status)) {
+			for(Input i:this.inputs) {
+				l+=i.getInputCount();
+			}
+			l /= this.timeInMins;
+		}
+		return l;
+	}
 	
 	public String getJobId() {
 		return jobId;
@@ -59,10 +70,11 @@ public class Job {
 	public void setInputRejectionCount(int[] inputRejectionCount) {
 		this.inputRejectionCount = inputRejectionCount;
 	}
-	public String[] getErrors() {
+	@JsonIgnore
+	public ErrorMessage[] getErrors() {
 		return errors;
 	}
-	public void setErrors(String[] errors) {
+	public void setErrors(ErrorMessage[] errors) {
 		this.errors = errors;
 	}
 	

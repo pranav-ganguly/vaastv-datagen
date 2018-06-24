@@ -195,32 +195,127 @@ PUT _template/template_1
   }
 }
 
+PUT _template/template_1
+{
+  "index_patterns": ["te*", "bar*"],
+  "settings": {
+    "number_of_shards": 1
+  },
+  "mappings": {
+    "type1": {
+      "_source": {
+        "enabled": false
+      },
+      "properties": {
+        "host_name": {
+          "type": "keyword"
+        },
+        "created_at": {
+          "type": "date",
+          "format": "EEE MMM dd HH:mm:ss Z YYYY"
+        }
+      }
+    }
+  }
+}
+
 GET mockmetrics.2018-01-01/_search
 {
-  "query" : {
-        "match": {
-          "entityType": "JOB"
-        }
+  "query": {
+    "bool": {
+      "must":{
+        "match":{"status":"SUCCESSFUL"}
+      },
+      "filter":{
+        "match":{"entityType":"JOB"}
+      }
     }
-    , "size": 3
+  }
+  
+    , "size": 5
     ,"script_fields" : {
         "tPut" : {
             "script" : {
               "lang": "painless",
               "source": """
+                def tPut = 0;
                 if(doc['entityType.keyword'].value=='JOB'){
-                  def tPut = 0;
-                  for(def i : doc['inputs.inputCount']){
-                    tPut=i;
+                  for(def cn : doc['inputs.inputCount']){
+                    tPut += cn;
                   }
-                  int time = doc['timeInMins'].;
-                  return tPut/(time*60);
-                } 
+                }
+                tPut = tPut/doc['timeInMins'].value;
+                return tPut; 
               """
             }
         }
     }
-    
+  
+}
+
+
+GET mockmetrics.2018-02-01/_search
+{
+  "query": {
+    "bool": {
+      "must":{
+        "match":{"status":"SUCCESSFUL"}
+      },
+      "filter":{
+        "match":{"entityType":"JOB"}
+      }
+    }
+  },
+  "size": 5
+}
+
+GET mockmetrics.2018-02-02/r_cEAmQBY7c_dk_LziEN
+
+GET _cat/indices?v
+GET mockmetrics.2018-02-06/_search
+{
+  "query": {
+    "match_all": {}
+  }
+  , "size": 2
+}
+
+GET mockmetrics.2018-01-02/_search
+{
+  "query": {
+    "bool": {
+      "must":{
+        "match":{"status":"SUCCESSFUL"}
+      },
+      "filter":{
+        "match":{"entityType":"JOB"}
+      }
+    }
+  }
+  , "size": 2
+}'
+
+PUT _template/mockmetrics_template
+{
+  "index_patterns": ["mockmetrics*"],
+  
+  "mappings": {
+    "entity": {
+      "properties": {
+        "startTime": {
+          "type":   "date",
+          "format": "epoch_millis"
+          },
+        "entity_type": { 
+          "type": "join",
+          "relations": {
+            "jobId": ["inputJobId","outputJobId"]
+          }
+        }
+      }
+    }
+  }
+  
 }
 
 GET _template
@@ -246,3 +341,37 @@ double tPut = 0;
                   // tPut = -1;
                   //}
                 return tPut;
+                
+                
+.es(
+	index=metricbeat-*, 
+	timefield='@timestamp', 
+	metric='max:system.memory.actual.used.bytes'
+), 
+.es(
+index=metricbeat-*, 
+timefield='@timestamp', 
+metric='max:system.memory.actual.used.bytes')
+	.if(
+	gt,
+	12500000000,
+	.es(
+		index=metricbeat-*, 
+		timefield='@timestamp', 
+		metric='max:system.memory.actual.used.bytes'
+		),
+	null
+	)
+	.label('warning')
+	.color('#FFCC11'), 
+	.es(
+	index=metricbeat-*, 
+	timefield='@timestamp', 
+	metric='max:system.memory.actual.used.bytes')
+	.if(gt,15000000000,
+	.es(index=metricbeat-*, timefield='@timestamp',
+	 metric='max:system.memory.actual.used.bytes'),null)
+	 .label('severe').color('red'), 
+	 .es(index=metricbeat-*, timefield='@timestamp',
+	  metric='max:system.memory.actual.used.bytes').mvavg(10)
+                

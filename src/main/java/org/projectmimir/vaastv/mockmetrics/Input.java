@@ -14,5 +14,9 @@ public interface Input {
 	
 	public boolean isValid();
 	public void setValid(boolean flag);
+	public long getTimeTakenMillis();
+	public void setTimeTakenMillis(long timeTakenMillis);
+	public double getBadInputPct();
+	public void setBadInputPct(double badInputPct);
 	public Object clone() throws CloneNotSupportedException;
 }
